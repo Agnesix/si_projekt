@@ -1,17 +1,22 @@
-from math import floor
-
 import numpy as np
-from matplotlib import pyplot as plt
-
+import matplotlib.pyplot as plt
+from math import floor
+from typing import Optional
 from approximator import find_periods, polynomial_fit
 
 class PeriodicSignal:
-    def __init__(self, x, y):
+    def __init__(self, x, y, detect='all', seg_length=300):
         self.x = x
         self.y = y
 
         self.cycles = []
-        self.find_cycles()
+        
+        if detect == 'all':
+            self.find_cycles()
+        elif detect == 'segment':
+            self.find_cycles_by_segment(seg_length)
+        else:
+            raise ValueError("Incorrect detection mode.")
 
         for cycle in self.cycles:
             print(cycle.len)
@@ -30,11 +35,35 @@ class PeriodicSignal:
             self.cycles.append(Cycle(self.x[last_peak:peak + 1], self.y[last_peak:peak + 1]))
             last_peak = peak + 1
 
-        self.cycles.append(Cycle(self.x[last_peak:], self.y[last_peak:]))
+        if last_peak < len(self.x) and len:
+            self.cycles.append(Cycle(self.x[last_peak:], self.y[last_peak:]))
+            
+    def find_cycles_by_segment(self, seg_length=300):
+        start = 0
+
+        while start < len(self.y) - 1:
+            segment = self.y[start:start + seg_length]
+            peaks = find_periods(segment)
+
+            if len(peaks) == 0:
+                start += seg_length // 2
+                continue
+
+            last_peak = 0
+            for peak in peaks:
+                end = start + peak + 1
+                self.cycles.append(Cycle(self.x[start + last_peak:end], self.y[start + last_peak:end]))
+                last_peak = peak + 1
+
+            start += last_peak
+        
 
     def plot_signal(self):
         plt.plot(self.x, self.y)
-        plt.plot(self.x, self.yf, color='red')
+        plt.plot(self.x[:len(self.yf)], self.yf, color='red')
+
+        # for cycle in self.cycles:
+        #     plt.axvline(cycle.x[0], linestyle='--', color='black')
 
         plt.title("Sygnał z nałożonymi okresami")
         plt.xlabel("Czas [s]")
@@ -110,23 +139,30 @@ class PeriodicSignal:
             mean.append(np.mean(vals))
 
         return [Cycle(range(max_len), median), Cycle(range(max_len), mean)]
-
+    
+    def extend(self, signal: 'PeriodicSignal'):
+        self.x = np.concatenate((self.x, signal.x))
+        self.y = np.concatenate((self.y, signal.y))
+        self.yf = np.concatenate((self.yf, signal.yf))
+        self.cycles.extend(signal.cycles)
+        
+        
 class Cycle:
-    def __init__(self, x: [], y: [], deg = 5):
+    def __init__(self, x: list, y: list, deg = 5):
         self.len = len(x)
         self.x = x
         self.y = y
+        
+        self.max_id = np.argmax(y)
 
-        self.max_id = int(np.argmax(y))
-
-        left_min_id = int(np.argmin(y[:self.max_id])) if self.max_id > 0 else 0
-        right_min_id = int(np.argmin(y[self.max_id:]) + self.max_id) if self.max_id < len(y) else self.max_id
+        left_min_id = np.argmin(y[:self.max_id]) if self.max_id > 0 else 0
+        right_min_id = np.argmin(y[self.max_id:]) + self.max_id if self.max_id < len(y) else self.max_id
 
         self.min_id = [left_min_id, right_min_id]
 
-        self.yf, _ = polynomial_fit(self.x, self.y, deg)
+        self.yf, _ = polynomial_fit(self.x, self.y, 4)
 
-    def get_indices(self, extra_indices = 0) -> None or []:
+    def get_indices(self, extra_indices = 0) -> Optional[list]:
         if extra_indices < 0:
             return None
 
