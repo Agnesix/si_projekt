@@ -2,24 +2,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 from math import floor
 from typing import Optional
-from approximator import find_periods, polynomial_fit
+from approximator import find_periods, interpolate
 
 class PeriodicSignal:
-    def __init__(self, x, y, detect='all', seg_length=300):
+    def __init__(self, x, y, detect='all', margin=6):
         self.x = x
         self.y = y
-
+        
+        self.peaks = []
         self.cycles = []
         
         if detect == 'all':
-            self.find_cycles()
+            self.find_cycles(margin=margin)
         elif detect == 'segment':
-            self.find_cycles_by_segment(seg_length)
+            self.find_cycles_by_segment(margin=margin)
         else:
             raise ValueError("Incorrect detection mode.")
-
-        for cycle in self.cycles:
-            print(cycle.len)
 
         self.yf = []
 
@@ -27,43 +25,66 @@ class PeriodicSignal:
             for yf in cycle.yf:
                 self.yf.append(yf)
 
-    def find_cycles(self):
-        peaks = find_periods(self.y)
+    def find_cycles(self, margin=0):
+        self.peaks = find_periods(self.y)
+
         last_peak = 0
-
-        for peak in peaks:
-            self.cycles.append(Cycle(self.x[last_peak:peak + 1], self.y[last_peak:peak + 1]))
-            last_peak = peak + 1
-
-        if last_peak < len(self.x) and len:
-            self.cycles.append(Cycle(self.x[last_peak:], self.y[last_peak:]))
-            
-    def find_cycles_by_segment(self, seg_length=300):
-        start = 0
-
-        while start < len(self.y) - 1:
-            segment = self.y[start:start + seg_length]
-            peaks = find_periods(segment)
-
-            if len(peaks) == 0:
-                start += seg_length // 2
-                continue
-
-            last_peak = 0
-            for peak in peaks:
-                end = start + peak + 1
-                self.cycles.append(Cycle(self.x[start + last_peak:end], self.y[start + last_peak:end]))
-                last_peak = peak + 1
-
-            start += last_peak
         
+        for peak in self.peaks:
+            start = max(0, last_peak - margin)
+            end = min(len(self.x), peak + margin)
+            
+            if end - start <= 2:
+                continue
+            
+            self.cycles.append(Cycle(self.x[start:end], self.y[start:end], margin, peak - last_peak + 1))
+            last_peak = peak+1
+            
+        if last_peak < len(self.x) - 1:
+            self.cycles.append(Cycle(self.x[last_peak:], self.y[last_peak:], margin, len(self.x) - last_peak))
+            
+    def find_cycles_by_segment(self, margin=0):
+        seg_start = 0
+
+        while seg_start < len(self.x) - 1:
+            local_y = self.y[seg_start:]
+            peaks = find_periods(local_y)
+            
+            if len(peaks) < 1:
+                break
+
+            if len(peaks) >= 5:
+                seg_end = seg_start + peaks[4]
+            else:
+                seg_end = seg_start + peaks[-1]
+
+            seg_end = min(seg_end + 1, len(self.x))
+
+            segment_y = self.y[seg_start:seg_end]
+            segment_peaks = find_periods(segment_y)
+            
+            last_peak = seg_start
+            for peak in segment_peaks:
+                absolute_peak = seg_start + peak
+                start = max(0, last_peak - margin)
+                end = min(len(self.x), absolute_peak + margin)
+                
+                self.cycles.append(
+                    Cycle(self.x[start:end], self.y[start:end], margin, absolute_peak - last_peak + 1)
+                )
+                
+                last_peak = absolute_peak
+                self.peaks.append(absolute_peak)
+
+            seg_start = seg_end
 
     def plot_signal(self):
+        plt.figure(figsize=(10,4))
         plt.plot(self.x, self.y)
         plt.plot(self.x[:len(self.yf)], self.yf, color='red')
 
-        # for cycle in self.cycles:
-        #     plt.axvline(cycle.x[0], linestyle='--', color='black')
+        for peak in self.peaks:
+            plt.axvline(self.x[peak], linestyle='--', color='black')
 
         plt.title("Sygnał z nałożonymi okresami")
         plt.xlabel("Czas [s]")
@@ -118,68 +139,11 @@ class PeriodicSignal:
         plt.grid(True)
         plt.legend()
         plt.show()
-
-    def find_approx_cycle(self):
-        max_len = self.cycles[0].len
-
-        for i in self.cycles:
-            max_len = max(max_len, i.len)
-
-        median = []
-        mean = []
-
-        for i in range(max_len):
-            vals = []
-
-            for j in range(len(self.cycles)):
-                if len(self.cycles.x) > i:
-                    vals.append(self.cycles[j].y[i])
-
-            median.append(np.median(vals))
-            mean.append(np.mean(vals))
-
-        return [Cycle(range(max_len), median), Cycle(range(max_len), mean)]
-    
-    def extend(self, signal: 'PeriodicSignal'):
-        self.x = np.concatenate((self.x, signal.x))
-        self.y = np.concatenate((self.y, signal.y))
-        self.yf = np.concatenate((self.yf, signal.yf))
-        self.cycles.extend(signal.cycles)
-        
         
 class Cycle:
-    def __init__(self, x: list, y: list, deg = 5):
-        self.len = len(x)
-        self.x = x
-        self.y = y
-        
-        self.max_id = np.argmax(y)
-
-        left_min_id = np.argmin(y[:self.max_id]) if self.max_id > 0 else 0
-        right_min_id = np.argmin(y[self.max_id:]) + self.max_id if self.max_id < len(y) else self.max_id
-
-        self.min_id = [left_min_id, right_min_id]
-
-        self.yf, _ = polynomial_fit(self.x, self.y, 4)
-
-    def get_indices(self, extra_indices = 0) -> Optional[list]:
-        if extra_indices < 0:
-            return None
-
-        jump = (self.max_id - self.min_id[0]) / ((extra_indices / 2) + 2)
-        left_indices = (i for i in range(self.min_id[0], self.max_id, int(floor(jump))))
-        left_indices = left_indices[1:len(left_indices) - 1]
-
-        jump = (self.min_id[1] - self.max_id) / ((extra_indices / 2) + 2)
-        right_indices = (i for i in range(self.max_id, self.min_id[1], int(floor(jump))))
-        right_indices = right_indices[1:len(right_indices) - 1]
-
-        indices = [self.min_id[0]]
-        for i in left_indices:
-            indices.append(i)
-        indices.append(self.max_id)
-        for i in right_indices:
-            indices.append(i)
-        indices.append(self.min_id[1])
-
-        return indices
+    def __init__(self, x: list, y: list, margin, length):
+        self.yf = interpolate(x, y)
+        self.yf = self.yf[margin:length + margin]
+        self.x = x[margin:length + margin]
+        self.y = y[margin:length + margin]
+        self.len = len(self.x)

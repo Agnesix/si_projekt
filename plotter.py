@@ -20,3 +20,13 @@ def plot_comparison(x, y_raw, y_fit, title, raw_label='Raw data', fit_label='Fit
     plt.grid(True)
     plt.legend()
     plt.show()
+    
+def plot_peaks(x, y, peaks):
+    plt.figure(figsize=(10, 6))
+    plt.plot(x, y)
+    
+    for peak in peaks:
+        plt.axvline(x[peak], linestyle='--', color='red')
+    
+    plt.grid(True)
+    plt.show()
